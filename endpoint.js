@@ -67,3 +67,23 @@ async function proxyFetch(url, options = {}, large = false) {
   throw lastError;
 }
 
+// Builds an index of where each line starts in a text blob, so a match offset from a
+// regex can be turned into a line number without rescanning the whole string each time
+function computeLineOffsets(content) {
+  const offsets = [0];
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) === 10 /* \n */) offsets.push(i + 1);
+  }
+  return offsets;
+}
+
+// Binary-searches lineOffsets for the line containing index
+function getLineNumber(lineOffsets, index) {
+  let lo = 0, hi = lineOffsets.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (lineOffsets[mid] <= index) lo = mid; else hi = mid - 1;
+  }
+  return lo + 1;
+}
+
