@@ -154,3 +154,14 @@ function extractScriptUrls(html, baseUrl) {
   return [...new Set(scripts)];
 }
 
+function isInterestingFile(url) {
+  if (!url) return false;
+  const cleaned = url.split("?")[0].toLowerCase();
+  const interestingExtensions = [
+    ".json", ".xml", ".config", ".env", ".yaml", ".yml", ".sql", ".db", ".bak",
+    ".zip", ".tar", ".gz", ".7z", ".pdf", ".doc", ".docx", ".js", ".html",
+    ".php", ".asp", ".aspx", ".jsp", ".txt", ".xls", ".xlsx", ".csv", ".log"
+  ];
+  return interestingExtensions.some(ext => cleaned.endsWith(ext));
+}
+
