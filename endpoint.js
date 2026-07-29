@@ -36,6 +36,18 @@ function ensureDataLoaded() {
   return dataReadyPromise;
 }
 
+// False-positive keywords for secret detection (loaded from data/blocked-secret-keywords.txt)
+let blockedSecretKeywords = [];
+
+// File extensions to ignore (loaded from data/excluded-extensions.txt)
+let excludedExtensions = [];
+
+// Third-party/tracker domains to ignore (loaded from data/ignored-domains.txt)
+let externalDomainsToIgnore = [];
+
+// URL prefixes to ignore (loaded from data/disallowed-prefixes.txt)
+let disallowedPrefixes = [];
+
 // Normalizes a URL (origin + path + query, no fragment)
 const normalizeUrl = (url) => {
   try {
