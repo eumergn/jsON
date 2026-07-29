@@ -9,6 +9,33 @@ const exportJson = document.getElementById("crawler-export-json");
 const scannedJs = new Set(); // avoid duplicate scans across sources
 console.log("%cjsON initialized", "color: #171717; font-weight: bold; font-size: 1.1rem;");
 
+// Sensitive path wordlist for the prober (loaded from data/sensitive-paths.txt)
+let sensitivePaths = [];
+
+// Loads every data/*.txt wordlist once, in parallel, before first use. Both entry points
+// (startScan, the prober) await this so the extraction/probing logic itself can stay
+// synchronous and doesn't need to change.
+async function loadTextList(path) {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`Failed to load ${path}: HTTP ${res.status}`);
+  const text = await res.text();
+  return text.split('\n').map(line => line.trim()).filter(Boolean);
+}
+
+let dataReadyPromise = null;
+function ensureDataLoaded() {
+  if (!dataReadyPromise) {
+    dataReadyPromise = Promise.all([
+      loadTextList('data/sensitive-paths.txt').then(v => { sensitivePaths = v; }),
+      loadTextList('data/blocked-secret-keywords.txt').then(v => { blockedSecretKeywords = v; }),
+      loadTextList('data/excluded-extensions.txt').then(v => { excludedExtensions = v; }),
+      loadTextList('data/ignored-domains.txt').then(v => { externalDomainsToIgnore = v; }),
+      loadTextList('data/disallowed-prefixes.txt').then(v => { disallowedPrefixes = v; }),
+    ]);
+  }
+  return dataReadyPromise;
+}
+
 // Normalizes a URL (origin + path + query, no fragment)
 const normalizeUrl = (url) => {
   try {
@@ -163,5 +190,24 @@ function isInterestingFile(url) {
     ".php", ".asp", ".aspx", ".jsp", ".txt", ".xls", ".xlsx", ".csv", ".log"
   ];
   return interestingExtensions.some(ext => cleaned.endsWith(ext));
+}
+
+// Randomizes a delay by +/-30% so requests aren't perfectly periodic (an easy pattern
+// for a simple rate-limiter to key on).
+function jitter(ms) {
+  return ms * (0.7 + Math.random() * 0.6);
+}
+
+function downloadFile(filename, content, type) {
+  const blob = new Blob([content], { type });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(link.href);
+    document.body.removeChild(link);
+  }, 0);
 }
 
