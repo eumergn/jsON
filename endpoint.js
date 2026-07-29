@@ -9,22 +9,61 @@ const exportJson = document.getElementById("crawler-export-json");
 const scannedJs = new Set(); // avoid duplicate scans across sources
 console.log("%cjsON initialized", "color: #171717; font-weight: bold; font-size: 1.1rem;");
 
+// Normalizes a URL (origin + path + query, no fragment)
 const normalizeUrl = (url) => {
-  // will normalize a URL to origin + path + query, dropping the fragment, so the same
-  // page reached through different links/anchors is not scanned twice
+  try {
+    const u = new URL(url);
+    return u.origin + u.pathname + u.search;
+  } catch { return url; }
 };
 
+// Treats a URL as a directory, for resolving relative links
 const directoryfyUrl = (url) => {
-  // will treat a URL as a directory when it has no file extension, so relative links
-  // found on that page resolve correctly
+  if (url.endsWith('/')) return url;
+  try {
+    const urlObj = new URL(url);
+    const lastPart = urlObj.pathname.split('/').pop() || "";
+    if (!lastPart.includes('.')) {
+      return url + '/';
+    }
+  } catch { }
+  return url;
 };
 
+// Escapes untrusted data before it's inserted into innerHTML
 function escapeHtml(str) {
-  // will escape untrusted text before it gets inserted into innerHTML
+  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Tries each CORS proxy in turn, returns the first response that actually looks like it
+// came from the target instead of the proxy's own error page.
+// TODO: large will pick a reordered proxy list once that list gets its own commit.
 async function proxyFetch(url, options = {}, large = false) {
-  // will fetch a target URL through a rotating list of CORS proxies, falling back to the
-  // next one in the list on failure or on a proxy serving its own error page
+  const list = [
+    (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+    (u) => `https://cors.eu.org/${u}`,
+    (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+    (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
+  ];
+  let lastError;
+  for (const buildUrl of list) {
+    try {
+      const proxied = buildUrl(url);
+      const res = await fetch(proxied, {
+        ...options,
+        signal: AbortSignal.timeout(20000)
+      });
+      if (res.status >= 500 || res.status === 413) {
+        lastError = new Error(`Proxy ${res.status}`);
+        continue;
+      }
+      return res;
+    } catch (e) {
+      lastError = e;
+      continue;
+    }
+  }
+  throw lastError;
 }
 
