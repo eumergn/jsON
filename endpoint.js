@@ -87,3 +87,70 @@ function getLineNumber(lineOffsets, index) {
   return lo + 1;
 }
 
+// Detects file-looking URLs (absolute or quoted relative)
+function extractFilesWithLines(content, lineOffsets) {
+  const fileRegex = /((?:https?:\/\/|(?<=["']))[^"'\s<>]*\.(?:json|xml|config|env|yaml|yml|sql|db|bak|zip|tar|gz|7z|pdf|doc|docx|js|html|php|asp|aspx|jsp|txt)(?:\?[^"'\s]*)?)(?:["'\s]|$)/gi;
+  const matches = [...content.matchAll(fileRegex)];
+
+  return matches.map(m => ({
+    value: m[1],
+    line: getLineNumber(lineOffsets, m.index)
+  })).filter(f => {
+    if (!f.value || f.value.startsWith(".")) return false;
+    // Length check to avoid massive false positives
+    if (f.value.length < 4 || f.value.length > 250) return false;
+    return true;
+  });
+}
+
+// Finds same-site <a href> links to crawl next
+function extractInternalLinks(html, baseUrl) {
+  const directoryBase = directoryfyUrl(baseUrl);
+  const currentUrlObj = new URL(directoryBase);
+  const targetHost = currentUrlObj.hostname.replace(/^www\./, "");
+
+  // raw HTML href="..." plus markdown [text](url), needed because the jina.ai fallback
+  // returns markdown instead of HTML, so links show up in that form instead
+  const patterns = [/href=["']([^"']+)["']/gi, /\]\(([^)\s]+)\)/g];
+  const links = [];
+  for (const re of patterns) {
+    let match;
+    while ((match = re.exec(html)) !== null) {
+      try {
+        const url = new URL(match[1], directoryBase);
+        const linkHost = url.hostname.replace(/^www\./, "");
+
+        // allow subdomains and www variants
+        if ((linkHost === targetHost || url.hostname.endsWith("." + targetHost)) &&
+          !url.pathname.endsWith(".js") && !url.pathname.endsWith(".css")) {
+          links.push(normalizeUrl(url.href.split("#")[0]));
+        }
+      } catch { }
+    }
+  }
+  return [...new Set(links)];
+}
+
+// Finds same-site <script src> URLs to crawl next
+function extractScriptUrls(html, baseUrl) {
+  const directoryBase = directoryfyUrl(baseUrl);
+  const currentUrlObj = new URL(directoryBase);
+  const targetHost = currentUrlObj.hostname.replace(/^www\./, "");
+
+  const re = /<script[^>]+src=["']([^"']+)["']/gi;
+  const scripts = [];
+  let match;
+  while ((match = re.exec(html)) !== null) {
+    try {
+      const url = new URL(match[1], directoryBase);
+      const scriptHost = url.hostname.replace(/^www\./, "");
+
+      // allow subdomains and www variants
+      if (scriptHost === targetHost || url.hostname.endsWith("." + targetHost) || !url.hostname) {
+        scripts.push(normalizeUrl(url.href));
+      }
+    } catch { }
+  }
+  return [...new Set(scripts)];
+}
+
