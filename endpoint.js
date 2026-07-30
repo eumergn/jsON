@@ -210,6 +210,19 @@ function jitter(ms) {
   return ms * (0.7 + Math.random() * 0.6);
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Crawler throttle: delay between requests + a hard page cap
+const CRAWL_REQUEST_DELAY_MS = 150;
+const CRAWL_DELAY_MAX_MS = 5000;
+const CRAWL_MAX_PAGES = 500;
+let crawlerAdaptiveDelay = CRAWL_REQUEST_DELAY_MS; // backs off on 429s, eases back down otherwise
+
+// Same throttle idea, applied to the sensitive-path prober
+const PROBE_DELAY_MS = 75;
+const PROBE_DELAY_MAX_MS = 4000;
+const PROBE_CONCURRENCY = 6; // parallel workers pulling from the path queue
+
 function downloadFile(filename, content, type) {
   const blob = new Blob([content], { type });
   const link = document.createElement("a");
