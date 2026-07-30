@@ -244,6 +244,44 @@ const secretPatterns = {
 // Skip the full secret-regex pass unless a likely keyword is present
 const secretTrigger = /AKIA|AIza|sk_live|ghp_|github_pat_|gh[or]_|xox[baprs]|eyJ|-----BEGIN|mongodb|postgres|postgresql|algolia|cloudflare|mysql|sgp_|segment|sgmt|facebook|fb|ya29|hooks\.slack\.com|discord\.com\/api\/webhooks|DefaultEndpointsProtocol|dop_v1_|glpat-|ghs_|sk_test_|sq0atp-|[0-9]{8,10}:|SG\.|AC[a-f0-9]{32}|heroku|redis|sbp_|npm_|firebaseio/i;
 
+// Extracts URL-like strings from JS/HTML content
+function extractEndpointsWithLines(content, lineOffsets) {
+  const matches = [...content.matchAll(endpointRegex)];
+  return matches.map(m => ({
+    value: m[1],
+    line: getLineNumber(lineOffsets, m.index)
+  })).filter(e => {
+    // webhooks are shown as secrets instead, not endpoints
+    if (e.value.includes("hooks.slack.com") || e.value.includes("discord.com/api/webhooks")) return false;
+    return filterUrl(e.value);
+  });
+}
+
+// Runs the secret-pattern regexes against page content
+function extractSecretsWithLines(content, lineOffsets) {
+  if (!secretTrigger.test(content)) return [];
+
+  const found = [];
+  for (const [name, regex] of Object.entries(secretPatterns)) {
+    const matches = [...content.matchAll(regex)];
+    matches.forEach(m => {
+      // prefer the capture group if present, else the whole match
+      let val = (m[1] || m[0]).trim();
+
+      // skip long paths that aren't actually URIs (false positives)
+      if (val.includes("/") && val.split("/").length > 3 && !val.includes("://")) return;
+      if (blockedSecretKeywords.some(bk => val.includes(bk))) return;
+      if (val.length < 8 || val.length > 500) return;
+
+      found.push({
+        value: `${name}: ${val}`,
+        line: getLineNumber(lineOffsets, m.index)
+      });
+    });
+  }
+  return found;
+}
+
 // Detects file-looking URLs (absolute or quoted relative)
 function extractFilesWithLines(content, lineOffsets) {
   const fileRegex = /((?:https?:\/\/|(?<=["']))[^"'\s<>]*\.(?:json|xml|config|env|yaml|yml|sql|db|bak|zip|tar|gz|7z|pdf|doc|docx|js|html|php|asp|aspx|jsp|txt)(?:\?[^"'\s]*)?)(?:["'\s]|$)/gi;
