@@ -92,6 +92,26 @@ const PROXY_LIST_LARGE = [
     (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
 ];
 
+// Signatures of a proxy serving its own error/rate-limit page instead of relaying the target.
+// A real page from the target should never contain the proxy's own hostname.
+const PROXY_ERROR_SIGNATURES = ['corsproxy.io', 'cors.eu.org', 'allorigins.win', 'codetabs.com', 'thingproxy.freeboard.io'];
+const deadProxies = new Set(); // proxies skipped for the rest of this session after repeated failures
+
+function looksLikeProxyError(text) {
+    if (!text) return false;
+    return PROXY_ERROR_SIGNATURES.some(sig => text.includes(sig));
+}
+
+// A proxy that fails twice in a session (timeout, 5xx, or a faked response) gets skipped for
+// the rest of the run instead of eating a fresh 20s timeout on every single later request.
+const proxyFailCounts = new Map();
+const PROXY_FAIL_THRESHOLD = 2;
+function markProxyFailure(buildUrl) {
+    const n = (proxyFailCounts.get(buildUrl) || 0) + 1;
+    proxyFailCounts.set(buildUrl, n);
+    if (n >= PROXY_FAIL_THRESHOLD) deadProxies.add(buildUrl);
+}
+
 // Tries each CORS proxy in turn, returns the first response that actually looks like it
 // came from the target instead of the proxy's own error page.
 // TODO: large will pick a reordered proxy list once that list gets its own commit.
