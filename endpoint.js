@@ -74,6 +74,24 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Public CORS proxies, tried in order until one works
+const PROXY_LIST = [
+    (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+    (url) => `https://cors.eu.org/${url}`,
+    (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
+];
+
+// Same list, reordered for large responses (corsproxy.io caps payload size)
+const PROXY_LIST_LARGE = [
+    (url) => `https://cors.eu.org/${url}`,
+    (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
+    (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+];
+
 // Tries each CORS proxy in turn, returns the first response that actually looks like it
 // came from the target instead of the proxy's own error page.
 // TODO: large will pick a reordered proxy list once that list gets its own commit.
