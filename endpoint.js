@@ -194,6 +194,56 @@ function getLineNumber(lineOffsets, index) {
   return lo + 1;
 }
 
+const endpointRegex = new RegExp(
+  `(?:"|')((?:[a-zA-Z]{1,10}:\\/\\/|\\/\\/)[^"']*?|(?:\\/|\\.\\/|\\.\\.\\/)[^"'\\s<>]+|[a-zA-Z0-9_\\-/]+\\.[a-z]{1,5}(?:\\?[^"'\\s]*)?)(?:"|')`,
+  "g"
+);
+
+// Regex patterns for common API keys/secrets
+const secretPatterns = {
+  "AWS Key": /AKIA[0-9A-Z]{16}/g,
+  "Google API": /AIza[0-9A-Za-z\-_]{35}/g,
+  "Stripe Live": /sk_live_[0-9a-zA-Z]{24,}/g,
+  "GitHub PAT": /ghp_[0-9a-zA-Z]{36}/g,
+  "GitHub Fine-Grained PAT": /github_pat_[0-9a-zA-Z_]{82}/g,
+  "GitHub OAuth Access Token": /gho_[0-9a-zA-Z]{36}/g,
+  "GitHub Refresh Token": /ghr_[0-9a-zA-Z]{36}/g,
+  "Slack Token": /xox[baprs]-[0-9a-zA-Z\-]{10,48}/g,
+  "JWT": /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+/g,
+  "Private Key": /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----/g,
+  "MongoDB": /mongodb(?:\+srv)?:\/\/[^\s"\'<>]+/g,
+  "PostgreSQL": /postgres(?:ql)?:\/\/[^\s"\'<>]+/g,
+  "Algolia Admin API Key": /algolia.{0,32}([a-z0-9]{32})\b/gi,
+  "Algolia Application ID": /algolia.{0,16}([A-Z0-9]{10})\b/gi,
+  "Cloudflare API Token": /cloudflare.{0,32}(?:secret|private|access|key|token).{0,32}([a-z0-9_-]{38,42})\b/gi,
+  "Cloudflare Service Key": /(?:cloudflare|x-auth-user-service-key).{0,64}(v1\.0-[a-z0-9._-]{160,})\b/gi,
+  "MySQL URI with Credentials": /mysql:\/\/[a-z0-9._%+\-]+:[^\s:@]+@(?:\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::\d{2,5})?(?:\/[^\s"\'?:]+)?(?:\?[^\s"\']*)?/g,
+  "Segment Public API Token": /\bsgp_[A-Z0-9_-]{60,70}\b/g,
+  "Segment API Key": /(?:segment|sgmt).{0,16}(?:secret|private|access|key|token).{0,16}([A-Z0-9_-]{40,50}\.[A-Z0-9_-]{40,50})/gi,
+  "Facebook Access Token": /EAACEdEose0cBA[A-Z0-9]{20,}\b/g,
+  "Google OAuth2 Access Token": /\bya29\.[a-z0-9_-]{30,}\b/g,
+  "Slack Webhook": /https:\/\/hooks\.slack\.com\/services\/[A-Z0-9]+\/[A-Z0-9]+\/[A-Za-z0-9]+/g,
+  "Discord Webhook": /https:\/\/discord(?:app)?\.com\/api\/webhooks\/[0-9]+\/[A-Za-z0-9_-]+/g,
+  "Azure Storage Key": /DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{88}/g,
+  "Digital Ocean Token": /dop_v1_[a-f0-9]{64}/g,
+  "GitLab PAT": /glpat-[0-9a-zA-Z\-_]{20}/g,
+  "GitHub App Token": /ghs_[0-9a-zA-Z]{36}/g,
+  "Stripe Test Key": /sk_test_[0-9a-zA-Z]{24,}/g,
+  "Square Access Token": /sq0atp-[0-9A-Za-z\-_]{22}/g,
+  "Telegram Bot Token": /\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b/g,
+  "SendGrid API Key": /SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g,
+  "Twilio Account SID": /\bAC[a-f0-9]{32}\b/g,
+  "Twilio API Key": /\bSK[a-f0-9]{32}\b/g,
+  "Heroku API Key": /[hH][eE][rR][oO][kK][uU].{0,16}(?:api|key|token).{0,16}([A-Za-z0-9-]{36})\b/gi,
+  "Redis URI": /redis(?:s)?:\/\/[^\s"'<>]+/g,
+  "Supabase Key": /sbp_[a-z0-9]{40}/g,
+  "NPM Token": /npm_[a-zA-Z0-9]{36}/g,
+  "Firebase DB URL": /https:\/\/[a-z0-9\-]+\.firebaseio\.com/g
+};
+
+// Skip the full secret-regex pass unless a likely keyword is present
+const secretTrigger = /AKIA|AIza|sk_live|ghp_|github_pat_|gh[or]_|xox[baprs]|eyJ|-----BEGIN|mongodb|postgres|postgresql|algolia|cloudflare|mysql|sgp_|segment|sgmt|facebook|fb|ya29|hooks\.slack\.com|discord\.com\/api\/webhooks|DefaultEndpointsProtocol|dop_v1_|glpat-|ghs_|sk_test_|sq0atp-|[0-9]{8,10}:|SG\.|AC[a-f0-9]{32}|heroku|redis|sbp_|npm_|firebaseio/i;
+
 // Detects file-looking URLs (absolute or quoted relative)
 function extractFilesWithLines(content, lineOffsets) {
   const fileRegex = /((?:https?:\/\/|(?<=["']))[^"'\s<>]*\.(?:json|xml|config|env|yaml|yml|sql|db|bak|zip|tar|gz|7z|pdf|doc|docx|js|html|php|asp|aspx|jsp|txt)(?:\?[^"'\s]*)?)(?:["'\s]|$)/gi;
