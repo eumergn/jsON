@@ -360,6 +360,20 @@ function isInterestingFile(url) {
   return interestingExtensions.some(ext => cleaned.endsWith(ext));
 }
 
+// Decides whether an extracted URL is worth keeping: not an ignored extension/domain/prefix,
+// not a base64 blob, and not absurdly long (a common false-positive shape)
+function filterUrl(url) {
+  const lowered = (url || "").toLowerCase();
+  return (
+    lowered &&
+    !excludedExtensions.some(ext => lowered.endsWith(ext)) &&
+    !externalDomainsToIgnore.some(domain => lowered.includes(domain)) &&
+    !disallowedPrefixes.some(prefix => lowered.startsWith(prefix)) &&
+    !lowered.includes("base64") &&
+    lowered.length < 300
+  );
+}
+
 // Randomizes a delay by +/-30% so requests aren't perfectly periodic (an easy pattern
 // for a simple rate-limiter to key on).
 function jitter(ms) {
