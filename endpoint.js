@@ -112,6 +112,22 @@ function markProxyFailure(buildUrl) {
     if (n >= PROXY_FAIL_THRESHOLD) deadProxies.add(buildUrl);
 }
 
+// Last-resort fallback: r.jina.ai renders the target page and returns it as markdown text.
+// Its own HTTP status is always 200 — the target's real status shows up as a text line
+// ("Warning: Target URL returned error 404: Not Found") inside the body, so it has to be
+// parsed out and used to build a normal-shaped Response for callers.
+// Note: unlike the raw CORS proxies, jina.ai renders the page itself server-side and does
+// NOT forward custom request headers (Cookie/Authorization/X-HackerOne-Research) to the
+// target — anything relying on those headers won't be authenticated when this path is used.
+async function jinaFetch(url) {
+    const res = await fetch('https://r.jina.ai/' + url, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) throw new Error(`jina.ai ${res.status}`);
+    const text = await res.text();
+    const errMatch = text.match(/Target URL returned error (\d{3})/i);
+    const status = errMatch ? parseInt(errMatch[1], 10) : 200;
+    return new Response(text, { status, statusText: String(status) });
+}
+
 // Tries each CORS proxy in turn, returns the first response that actually looks like it
 // came from the target instead of the proxy's own error page.
 // TODO: large will pick a reordered proxy list once that list gets its own commit.
