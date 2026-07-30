@@ -128,36 +128,50 @@ async function jinaFetch(url) {
     return new Response(text, { status, statusText: String(status) });
 }
 
-// Tries each CORS proxy in turn, returns the first response that actually looks like it
-// came from the target instead of the proxy's own error page.
-// TODO: large will pick a reordered proxy list once that list gets its own commit.
-async function proxyFetch(url, options = {}, large = false) {
-  const list = [
-    (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-    (u) => `https://cors.eu.org/${u}`,
-    (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
-    (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
-  ];
-  let lastError;
-  for (const buildUrl of list) {
-    try {
-      const proxied = buildUrl(url);
-      const res = await fetch(proxied, {
-        ...options,
-        signal: AbortSignal.timeout(20000)
-      });
-      if (res.status >= 500 || res.status === 413) {
-        lastError = new Error(`Proxy ${res.status}`);
-        continue;
-      }
-      return res;
-    } catch (e) {
-      lastError = e;
-      continue;
+// useJina: jina.ai renders the full page (often via headless browser) before returning
+// markdown, which can take several seconds per request. Fine for the crawler fetching a
+// handful of pages; far too slow to wait on for a bulk sweep of hundreds of paths, so the
+// prober disables it and just accepts "no data" once the raw proxies are exhausted.
+async function proxyFetch(url, options = {}, large = false, useJina = true) {
+    const list = large ? PROXY_LIST_LARGE : PROXY_LIST;
+    let lastError;
+    for (const buildUrl of list) {
+        if (deadProxies.has(buildUrl)) continue;
+        try {
+            const proxied = buildUrl(url);
+            const res = await fetch(proxied, {
+                ...options,
+                signal: AbortSignal.timeout(20000)
+            });
+            if (res.status >= 500 || res.status === 413) {
+                markProxyFailure(buildUrl);
+                lastError = new Error(`Proxy ${res.status}`);
+                continue;
+            }
+            // Some proxies return 200/403/429 while quietly serving their own error/rate-limit
+            // page instead of the target's real response. Catch that instead of returning it
+            // as if it were genuine target data.
+            const peek = await res.clone().text().catch(() => '');
+            if (looksLikeProxyError(peek)) {
+                markProxyFailure(buildUrl);
+                lastError = new Error('Proxy returned its own error page instead of the target');
+                continue;
+            }
+            return res;
+        } catch (e) {
+            markProxyFailure(buildUrl);
+            lastError = e;
+            continue;
+        }
     }
-  }
-  throw lastError;
+    if (useJina) {
+        try {
+            return await jinaFetch(url);
+        } catch (e) {
+            lastError = e;
+        }
+    }
+    throw lastError;
 }
 
 // Builds an index of where each line starts in a text blob, so a match offset from a
