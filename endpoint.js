@@ -896,3 +896,32 @@ function renderResults(filter = "", category = "all") {
   }
 }
 
+const copyIconSvg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const checkIconSvg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+async function copyToClipboard(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.classList.add("copied");
+    btn.innerHTML = checkIconSvg;
+    setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.innerHTML = copyIconSvg;
+    }, 2000);
+  } catch { }
+}
+
+// Crawler results tab/filter switching
+document.querySelectorAll("#crawler-section .tab-btn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelector("#crawler-section .tab-btn.active").classList.remove("active");
+    btn.classList.add("active");
+    renderResults(document.getElementById("crawler-filter-input").value, btn.dataset.tab);
+  };
+});
+
+document.getElementById("crawler-filter-input").oninput = (e) => {
+  const activeTab = document.querySelector(".tab-btn.active").dataset.tab;
+  renderResults(e.target.value, activeTab);
+};
+
