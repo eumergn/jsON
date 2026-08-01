@@ -844,3 +844,55 @@ function renderProberLine(path, status, fullUrl, length) {
   proberResults.appendChild(line);
 }
 
+function renderResults(filter = "", category = "all") {
+  results.innerHTML = "";
+  const grouped = {};
+
+  state.allData.forEach(item => {
+    if (category !== "all" && item.type !== category.slice(0, -1)) return;
+    if (filter && !item.value.toLowerCase().includes(filter.toLowerCase())) return;
+
+    if (!grouped[item.source]) grouped[item.source] = [];
+    grouped[item.source].push(item);
+  });
+
+  const sourceEntries = Object.entries(grouped);
+  if (sourceEntries.length === 0) {
+    results.innerHTML = "<div class='status'>No results found matching your criteria.</div>";
+    return;
+  }
+
+  for (const [source, items] of sourceEntries) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const title = document.createElement("h3");
+    title.innerText = source;
+    card.appendChild(title);
+
+    const list = document.createElement("ol");
+    items.forEach(item => {
+      const li = document.createElement("li");
+
+      const lineSpan = document.createElement("span");
+      lineSpan.className = "line-number";
+      lineSpan.innerText = `[L${item.line}]`;
+
+      const span = document.createElement("span");
+      span.className = `endpoint-text ${item.type === 'secret' ? 'secret-item' : ''}`;
+      span.innerText = item.value;
+
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "copy-btn";
+      copyBtn.innerHTML = copyIconSvg;
+      copyBtn.onclick = () => copyToClipboard(item.value, copyBtn);
+
+      li.appendChild(lineSpan);
+      li.appendChild(span);
+      li.appendChild(copyBtn);
+      list.appendChild(li);
+    });
+    card.appendChild(list);
+    results.appendChild(card);
+  }
+}
+
