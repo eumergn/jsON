@@ -442,3 +442,75 @@ const addResult = (source, type, value, line = 0) => {
   updateStats();
 };
 
+const setProgress = (percent) => {
+  const p = Math.round(percent);
+  document.getElementById("crawler-progress-bar").style.width = `${p}%`;
+  const textEl = document.getElementById("crawler-progress-percent");
+  if (textEl) textEl.innerText = `${p}%`;
+};
+
+// Runs the crawler starting from the entered URL
+const startScan = async (maxDepth) => {
+  let siteUrl = urlInput.value.trim();
+  if (!siteUrl) return alert("Enter a valid URL");
+  if (!/^https?:\/\//i.test(siteUrl)) siteUrl = "https://" + siteUrl;
+  siteUrl = normalizeUrl(siteUrl);
+  await ensureDataLoaded();
+
+  state.scanned = 0;
+  state.endpoints.clear();
+  state.secrets.clear();
+  state.files.clear();
+  state.parameters.clear();
+  state.allData = [];
+  state.scannedUrls.clear();
+  scannedJs.clear(); // Reset JS scan cache
+  crawlerAdaptiveDelay = CRAWL_REQUEST_DELAY_MS;
+  updateStats();
+
+  results.innerHTML = "";
+  scanBtn.style.display = "none";
+  document.getElementById("crawler-full-btn").style.display = "none";
+  stopScanBtn.style.display = "inline-block";
+  stopScanBtn.disabled = false;
+  state.isCrawlerStopped = false;
+
+  document.getElementById("crawler-progress-container").style.display = "block";
+  document.getElementById("crawler-filter-section").style.display = "none";
+  exportActions.style.display = "none";
+  status.innerText = maxDepth === 0 ? "Scanning single page..." : "Starting full recursive scan...";
+  setProgress(5);
+
+  try {
+    await recursiveScan(siteUrl, maxDepth);
+    if (!state.isCrawlerStopped) {
+      status.innerText = "Scan complete!";
+    } else {
+      status.innerText = "Scan stopped manually.";
+    }
+    setProgress(100);
+    document.getElementById("crawler-filter-section").style.display = "block";
+    exportActions.style.display = "flex";
+    renderResults();
+  } catch (e) {
+    console.error(e);
+    if (!state.isCrawlerStopped) {
+      status.innerText = "Scan failed. Check console.";
+    }
+  }
+  scanBtn.style.display = "inline-block";
+  scanBtn.disabled = false;
+  document.getElementById("crawler-full-btn").style.display = "inline-block";
+  document.getElementById("crawler-full-btn").disabled = false;
+  stopScanBtn.style.display = "none";
+};
+
+stopScanBtn.addEventListener("click", () => {
+  state.isCrawlerStopped = true;
+  stopScanBtn.disabled = true;
+  status.innerText = "Stopping scan... Finishing current requests.";
+});
+
+scanBtn.addEventListener("click", () => startScan(0));
+document.getElementById("crawler-full-btn").addEventListener("click", () => startScan(1));
+
