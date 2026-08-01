@@ -765,3 +765,82 @@ stopProbeBtn.onclick = () => {
   proberStatus.innerText = "Stopping prober... Finishing current request.";
 };
 
+const filterProberResults = (filter) => {
+  if (filter) activeProberFilter = filter;
+  proberResults.innerHTML = "";
+
+  proberData.forEach(item => {
+    if (doesItemMatchFilters(item)) {
+      renderProberLine(item.path, item.status, item.fullUrl, item.length);
+    }
+  });
+
+  document.querySelectorAll("[data-prober-filter]").forEach(btn => {
+    btn.classList.toggle("active", btn.getAttribute("data-prober-filter") === activeProberFilter);
+  });
+};
+
+// Checks a probe result against the active status + length filters
+function doesItemMatchFilters(item) {
+  const statusNum = parseInt(item.status);
+  let statusMatch = false;
+
+  if (activeProberFilter === "all") statusMatch = true;
+  else if (activeProberFilter === "200" && statusNum === 200) statusMatch = true;
+  else if (activeProberFilter === "403" && (statusNum === 403 || statusNum === 401 || statusNum === 429)) statusMatch = true;
+  else if (activeProberFilter === "404" && (statusNum === 404 || item.status === "ERROR")) statusMatch = true;
+
+  if (!statusMatch) return false;
+
+  const incStrings = proberIncludeLength.value.split(',').map(s => s.trim()).filter(s => s !== "");
+  const excStrings = proberExcludeLength.value.split(',').map(s => s.trim()).filter(s => s !== "");
+  const itemLenStr = String(item.length);
+
+  if (incStrings.length > 0 && !incStrings.includes(itemLenStr)) return false;
+  if (excStrings.length > 0 && excStrings.includes(itemLenStr)) return false;
+
+  return true;
+}
+
+proberIncludeLength.addEventListener('input', () => filterProberResults());
+proberExcludeLength.addEventListener('input', () => filterProberResults());
+
+document.querySelectorAll("#prober-filter-section .tab-btn").forEach(btn => {
+  btn.onclick = () => filterProberResults(btn.getAttribute("data-prober-filter"));
+});
+
+// Renders one row in the prober results list
+function renderProberLine(path, status, fullUrl, length) {
+  const line = document.createElement("div");
+  line.className = "prober-line";
+
+  let statusClass = "status-error";
+  if (status === 200) statusClass = "status-200";
+  else if (status === 403) statusClass = "status-403";
+  else if (status === 401) statusClass = "status-401";
+  else if (status === 429) statusClass = "status-403"; // rate-limited — styled like blocked, not "not found"
+  else if (status === 404) statusClass = "status-404";
+
+  const lengthDisplay = length !== undefined ? `<span class="prober-length" style="color:var(--text-dim); font-size:0.85em; font-family: monospace;">[${length}]</span>` : '';
+
+  const safeUrl = escapeHtml(fullUrl);
+  let openBtnHtml = "";
+  if (status === 200) {
+    openBtnHtml = `<a href="${safeUrl}" target="_blank" class="prober-open-btn-200" style="margin-left: 0;">Open</a>`;
+  } else if (status === 403 || status === 401) {
+    openBtnHtml = `<a href="${safeUrl}" target="_blank" class="prober-open-btn-403" style="margin-left: 0;">Open</a>`;
+  }
+
+  line.innerHTML = `
+    <span class="prober-path" style="flex: 1; word-break: break-all; padding-right: 15px;">${escapeHtml(path)}</span>
+    <div style="display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0;">
+      <span class="prober-status ${statusClass}" style="width: 50px; text-align: center;">${escapeHtml(String(status))}</span>
+      <div style="width: 75px; text-align: center; margin-left: 5px;">${openBtnHtml}</div>
+      <div style="width: 75px; text-align: right; margin-left: 5px;">${lengthDisplay}</div>
+    </div>
+  `;
+
+  if (proberResults.querySelector(".status")) proberResults.innerHTML = ""; // clear "loading" placeholder
+  proberResults.appendChild(line);
+}
+
