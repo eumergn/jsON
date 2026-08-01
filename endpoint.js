@@ -406,3 +406,39 @@ function downloadFile(filename, content, type) {
   }, 0);
 }
 
+const stopScanBtn = document.getElementById("crawler-stop-btn");
+
+// Crawler state
+const state = {
+  scanned: 0,
+  endpoints: new Set(),
+  secrets: new Set(),
+  files: new Set(),
+  parameters: new Set(),
+  allData: [], // { source, type, value, line }
+  scannedUrls: new Set(),
+  probedDomains: new Set(),
+  isScanning: false,
+  isCrawlerStopped: false
+};
+
+const updateStats = () => {
+  document.getElementById("crawler-stat-scanned").innerText = state.scanned;
+  document.getElementById("crawler-stat-endpoints").innerText = state.endpoints.size;
+  document.getElementById("crawler-stat-secrets").innerText = state.secrets.size;
+  document.getElementById("crawler-stat-files").innerText = state.files.size;
+  document.getElementById("crawler-stat-parameters").innerText = state.parameters.size;
+};
+
+const addResult = (source, type, value, line = 0) => {
+  // skip if this exact result was already recorded
+  if (state.allData.some(d => d.source === source && d.value === value && d.line === line && d.type === type)) return;
+
+  state.allData.push({ source, type, value, line });
+  if (type === "endpoint") state.endpoints.add(value);
+  if (type === "secret") state.secrets.add(value);
+  if (type === "file") state.files.add(value);
+  if (type === "parameter") state.parameters.add(value);
+  updateStats();
+};
+
