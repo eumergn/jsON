@@ -603,3 +603,165 @@ async function recursiveScan(url, maxDepth, currentDepth = 0, targetHost = null)
   }
 }
 
+// Crawler/Prober tab switching
+const navCrawler = document.getElementById("nav-crawler");
+const navProber = document.getElementById("nav-prober");
+const crawlerSection = document.getElementById("crawler-section");
+const proberSection = document.getElementById("prober-section");
+
+navCrawler.onclick = () => {
+  navCrawler.classList.add("active");
+  navProber.classList.remove("active");
+  crawlerSection.style.display = "block";
+  proberSection.style.display = "none";
+};
+
+navProber.onclick = () => {
+  navProber.classList.add("active");
+  navCrawler.classList.remove("active");
+  proberSection.style.display = "block";
+  crawlerSection.style.display = "none";
+};
+
+// Sensitive-path prober
+const probeBtn = document.getElementById("prober-scan-btn");
+const stopProbeBtn = document.getElementById("prober-stop-btn");
+const proberResults = document.getElementById("prober-results");
+const proberUrlInput = document.getElementById("prober-url-input");
+const proberProgressBar = document.getElementById("prober-progress-bar");
+const proberProgressContainer = document.getElementById("prober-progress-container");
+const proberStatus = document.getElementById("prober-status");
+
+// 200/403/404 stat counters
+const proberStat200 = document.getElementById("prober-stat-200");
+const proberStat403 = document.getElementById("prober-stat-403");
+const proberStat404 = document.getElementById("prober-stat-404");
+const proberFilterSection = document.getElementById("prober-filter-section");
+
+// response-length include/exclude filters
+const proberLengthFilters = document.getElementById("prober-length-filters");
+const proberIncludeLength = document.getElementById("prober-include-length");
+const proberExcludeLength = document.getElementById("prober-exclude-length");
+
+let proberData = []; // stores all probe results for later filtering
+let activeProberFilter = "all";
+let isProberStopped = false;
+
+probeBtn.onclick = async () => {
+  let url = proberUrlInput.value.trim();
+  if (!url) return alert("Enter a URL to probe");
+  if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+  await ensureDataLoaded();
+
+  try {
+    const origin = new URL(url).origin.replace(/\/+$/, ""); // avoid a double // when joining paths
+    const proberH1 = document.getElementById("prober-h1-input")?.value.trim();
+    const proberHeaders = proberH1 ? { "X-HackerOne-Research": proberH1 } : {};
+    proberResults.innerHTML = "";
+    proberResults.style.display = "block";
+    proberProgressContainer.style.display = "block";
+    proberFilterSection.style.display = "flex";
+    proberLengthFilters.style.display = "flex";
+    proberProgressBar.style.width = "0%";
+    const probPercentEl = document.getElementById("prober-progress-percent");
+    if (probPercentEl) probPercentEl.innerText = "0%";
+
+    proberData = [];
+    let stats = { 200: 0, 403: 0, 404: 0 };
+    let adaptiveProbeDelay = PROBE_DELAY_MS;
+    proberStat200.innerText = "0";
+    proberStat403.innerText = "0";
+    proberStat404.innerText = "0";
+
+    probeBtn.style.display = "none";
+    stopProbeBtn.style.display = "inline-block";
+    stopProbeBtn.disabled = false;
+    isProberStopped = false;
+
+    let completed = 0;
+    const total = sensitivePaths.length;
+
+    async function probeOnePath(path) {
+      const cleanPath = path.startsWith("/") ? path : "/" + path;
+      const fullUrl = origin + cleanPath;
+      try {
+        // useJina: true — worth the wait since PROBE_CONCURRENCY overlaps requests instead
+        // of paying jina's per-request delay serially for all ~600 paths
+        const res = await proxyFetch(fullUrl, { method: 'GET', headers: proberHeaders }, false, true);
+        const status = res.status;
+        const text = await res.text();
+        const length = text.length;
+
+        // back off on a real rate-limit signal, ease back toward baseline once things are clean
+        if (status === 429) {
+          adaptiveProbeDelay = Math.min(adaptiveProbeDelay * 2, PROBE_DELAY_MAX_MS);
+        } else {
+          adaptiveProbeDelay = Math.max(PROBE_DELAY_MS, adaptiveProbeDelay * 0.9);
+        }
+
+        // bucket 429 with 401/403, not with "confirmed absent" 404s
+        if (status === 200) stats[200]++;
+        else if (status === 403 || status === 401 || status === 429) stats[403]++;
+        else stats[404]++;
+
+        proberStat200.innerText = stats[200];
+        proberStat403.innerText = stats[403];
+        proberStat404.innerText = stats[404];
+
+        const resultItem = { path, status, fullUrl, length };
+        proberData.push(resultItem);
+
+        if (doesItemMatchFilters(resultItem)) {
+          renderProberLine(path, status, fullUrl, length);
+        }
+      } catch (e) {
+        stats[404]++;
+        proberStat404.innerText = stats[404];
+        const resultItem = { path, status: "ERROR", fullUrl, length: 0 };
+        proberData.push(resultItem);
+
+        if (doesItemMatchFilters(resultItem)) {
+          renderProberLine(path, "ERROR", fullUrl, 0);
+        }
+      }
+      completed++;
+      const percent = Math.round((completed / total) * 100);
+      proberProgressBar.style.width = percent + "%";
+      const probPercentEl = document.getElementById("prober-progress-percent");
+      if (probPercentEl) probPercentEl.innerText = percent + "%";
+      proberStatus.innerText = `Probing: ${path} (${completed}/${total})`;
+      await sleep(jitter(adaptiveProbeDelay)); // throttle each worker's own request pace
+    }
+
+    // A handful of workers pull from the shared queue concurrently, so a slow fallback
+    // (like jina.ai) doesn't force the whole ~600-path sweep to run one request at a time.
+    let nextIndex = 0;
+    async function worker() {
+      while (nextIndex < sensitivePaths.length) {
+        if (isProberStopped) return;
+        const path = sensitivePaths[nextIndex++];
+        await probeOnePath(path);
+      }
+    }
+    await Promise.all(Array.from({ length: PROBE_CONCURRENCY }, worker));
+
+    if (isProberStopped) {
+      proberStatus.innerText = `Probing stopped manually.`;
+    } else {
+      proberStatus.innerText = `Probing complete! ${total} paths checked.`;
+    }
+    proberFilterSection.style.display = "flex";
+  } catch (e) {
+    alert("Invalid URL");
+  } finally {
+    probeBtn.style.display = "inline-block";
+    stopProbeBtn.style.display = "none";
+  }
+};
+
+stopProbeBtn.onclick = () => {
+  isProberStopped = true;
+  stopProbeBtn.disabled = true;
+  proberStatus.innerText = "Stopping prober... Finishing current request.";
+};
+
