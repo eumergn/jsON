@@ -514,3 +514,92 @@ stopScanBtn.addEventListener("click", () => {
 scanBtn.addEventListener("click", () => startScan(0));
 document.getElementById("crawler-full-btn").addEventListener("click", () => startScan(1));
 
+// Recursively crawls pages + scripts, extracting endpoints/secrets/files
+async function recursiveScan(url, maxDepth, currentDepth = 0, targetHost = null) {
+  if (state.isCrawlerStopped) return;
+  const normUrl = normalizeUrl(url);
+  try {
+    const currentUrlObj = new URL(normUrl);
+    if (!targetHost) targetHost = currentUrlObj.hostname;
+
+    if (currentUrlObj.hostname !== targetHost && !currentUrlObj.hostname.endsWith("." + targetHost)) {
+      return;
+    }
+
+    if (currentDepth > maxDepth || state.scannedUrls.has(normUrl)) return;
+    if (state.scanned >= CRAWL_MAX_PAGES) return; // hard cap — avoid an uncontrolled crawl on large sites
+    state.scannedUrls.add(normUrl);
+    state.scanned++;
+    updateStats();
+
+    status.innerText = `Scanning: ${normUrl}`;
+    setProgress(Math.min(95, (state.scanned / CRAWL_MAX_PAGES) * 100));
+
+    await sleep(jitter(crawlerAdaptiveDelay)); // throttle between requests
+
+    const headersObj = {};
+    const crawlerCookie = document.getElementById("crawler-cookie-input")?.value.trim();
+    const crawlerAuth = document.getElementById("crawler-auth-input")?.value.trim();
+    const crawlerH1 = document.getElementById("crawler-h1-input")?.value.trim();
+
+    if (crawlerCookie) {
+      headersObj["X-JSpider-Cookie"] = crawlerCookie;
+    }
+    if (crawlerAuth) {
+      headersObj["X-JSpider-Auth"] = crawlerAuth;
+    }
+    if (crawlerH1) {
+      headersObj["X-HackerOne-Research"] = crawlerH1;
+    }
+
+    const res = await proxyFetch(normUrl, { headers: headersObj }, true);
+    if (res.status === 429) {
+      crawlerAdaptiveDelay = Math.min(crawlerAdaptiveDelay * 2, CRAWL_DELAY_MAX_MS);
+    } else {
+      crawlerAdaptiveDelay = Math.max(CRAWL_REQUEST_DELAY_MS, crawlerAdaptiveDelay * 0.9);
+    }
+    if (!res.ok) return;
+    const content = await res.text();
+
+    // pull endpoints/secrets/files out of the page content
+    const lineOffsets = computeLineOffsets(content);
+    const foundEndpoints = extractEndpointsWithLines(content, lineOffsets);
+    const foundSecrets = extractSecretsWithLines(content, lineOffsets);
+    const foundFiles = extractFilesWithLines(content, lineOffsets);
+
+    foundEndpoints.forEach(e => {
+      addResult(normUrl, "endpoint", e.value, e.line);
+      if (isInterestingFile(e.value)) {
+        addResult(normUrl, "file", e.value, e.line); // also list it under Files
+      }
+      if (e.value.includes("?")) {
+        addResult(normUrl, "parameter", e.value, e.line); // also list it under Parameters
+      }
+    });
+
+    foundSecrets.forEach(s => addResult(normUrl, "secret", s.value, s.line));
+
+    foundFiles.forEach(f => {
+      addResult(normUrl, "file", f.value, f.line);
+    });
+
+    // crawl further into discovered links/scripts
+    const links = extractInternalLinks(content, normUrl);
+    const scripts = extractScriptUrls(content, normUrl);
+
+    for (const script of scripts) {
+      if (state.isCrawlerStopped) break;
+      await recursiveScan(script, maxDepth, currentDepth, targetHost);
+    }
+
+    if (currentDepth < maxDepth) {
+      for (const link of links) {
+        if (state.isCrawlerStopped) break;
+        await recursiveScan(link, maxDepth, currentDepth + 1, targetHost);
+      }
+    }
+  } catch (e) {
+    console.warn(`Failed to scan ${normUrl}:`, e);
+  }
+}
+
