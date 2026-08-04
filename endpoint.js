@@ -69,11 +69,6 @@ const directoryfyUrl = (url) => {
   return url;
 };
 
-// Escapes untrusted data before it's inserted into innerHTML
-function escapeHtml(str) {
-  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
 // Public CORS proxies, tried in order until one works
 const PROXY_LIST = [
     (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
@@ -91,6 +86,30 @@ const PROXY_LIST_LARGE = [
     (url) => `https://thingproxy.freeboard.io/fetch/${url}`,
     (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
 ];
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Crawler throttle: delay between requests + a hard page cap
+const CRAWL_REQUEST_DELAY_MS = 150;
+const CRAWL_DELAY_MAX_MS = 5000;
+const CRAWL_MAX_PAGES = 500;
+let crawlerAdaptiveDelay = CRAWL_REQUEST_DELAY_MS; // backs off on 429s, eases back down otherwise
+
+// Same throttle idea, applied to the sensitive-path prober
+const PROBE_DELAY_MS = 75;
+const PROBE_DELAY_MAX_MS = 4000;
+const PROBE_CONCURRENCY = 6; // parallel workers pulling from the path queue
+
+// Randomizes a delay by +/-30% so requests aren't perfectly periodic (an easy pattern
+// for a simple rate-limiter to key on).
+function jitter(ms) {
+  return ms * (0.7 + Math.random() * 0.6);
+}
+
+// Escapes untrusted data before it's inserted into innerHTML
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 // Signatures of a proxy serving its own error/rate-limit page instead of relaying the target.
 // A real page from the target should never contain the proxy's own hostname.
@@ -373,25 +392,6 @@ function filterUrl(url) {
     lowered.length < 300
   );
 }
-
-// Randomizes a delay by +/-30% so requests aren't perfectly periodic (an easy pattern
-// for a simple rate-limiter to key on).
-function jitter(ms) {
-  return ms * (0.7 + Math.random() * 0.6);
-}
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Crawler throttle: delay between requests + a hard page cap
-const CRAWL_REQUEST_DELAY_MS = 150;
-const CRAWL_DELAY_MAX_MS = 5000;
-const CRAWL_MAX_PAGES = 500;
-let crawlerAdaptiveDelay = CRAWL_REQUEST_DELAY_MS; // backs off on 429s, eases back down otherwise
-
-// Same throttle idea, applied to the sensitive-path prober
-const PROBE_DELAY_MS = 75;
-const PROBE_DELAY_MAX_MS = 4000;
-const PROBE_CONCURRENCY = 6; // parallel workers pulling from the path queue
 
 function downloadFile(filename, content, type) {
   const blob = new Blob([content], { type });
