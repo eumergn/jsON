@@ -121,16 +121,6 @@ function looksLikeProxyError(text) {
     return PROXY_ERROR_SIGNATURES.some(sig => text.includes(sig));
 }
 
-// A proxy that fails twice in a session (timeout, 5xx, or a faked response) gets skipped for
-// the rest of the run instead of eating a fresh 20s timeout on every single later request.
-const proxyFailCounts = new Map();
-const PROXY_FAIL_THRESHOLD = 2;
-function markProxyFailure(buildUrl) {
-    const n = (proxyFailCounts.get(buildUrl) || 0) + 1;
-    proxyFailCounts.set(buildUrl, n);
-    if (n >= PROXY_FAIL_THRESHOLD) deadProxies.add(buildUrl);
-}
-
 // Last-resort fallback: r.jina.ai renders the target page and returns it as markdown text.
 // Its own HTTP status is always 200 — the target's real status shows up as a text line
 // ("Warning: Target URL returned error 404: Not Found") inside the body, so it has to be
@@ -145,6 +135,17 @@ async function jinaFetch(url) {
     const errMatch = text.match(/Target URL returned error (\d{3})/i);
     const status = errMatch ? parseInt(errMatch[1], 10) : 200;
     return new Response(text, { status, statusText: String(status) });
+}
+
+// Tries each CORS proxy in turn, returns the first response that's actually from the target
+// A proxy that fails twice in a session (timeout, 5xx, or a faked response) gets skipped for
+// the rest of the run instead of eating a fresh 20s timeout on every single later request.
+const proxyFailCounts = new Map();
+const PROXY_FAIL_THRESHOLD = 2;
+function markProxyFailure(buildUrl) {
+    const n = (proxyFailCounts.get(buildUrl) || 0) + 1;
+    proxyFailCounts.set(buildUrl, n);
+    if (n >= PROXY_FAIL_THRESHOLD) deadProxies.add(buildUrl);
 }
 
 // useJina: jina.ai renders the full page (often via headless browser) before returning
