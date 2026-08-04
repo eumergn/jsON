@@ -36,18 +36,6 @@ function ensureDataLoaded() {
   return dataReadyPromise;
 }
 
-// False-positive keywords for secret detection (loaded from data/blocked-secret-keywords.txt)
-let blockedSecretKeywords = [];
-
-// File extensions to ignore (loaded from data/excluded-extensions.txt)
-let excludedExtensions = [];
-
-// Third-party/tracker domains to ignore (loaded from data/ignored-domains.txt)
-let externalDomainsToIgnore = [];
-
-// URL prefixes to ignore (loaded from data/disallowed-prefixes.txt)
-let disallowedPrefixes = [];
-
 // Normalizes a URL (origin + path + query, no fragment)
 const normalizeUrl = (url) => {
   try {
@@ -194,26 +182,6 @@ async function proxyFetch(url, options = {}, large = false, useJina = true) {
     throw lastError;
 }
 
-// Builds an index of where each line starts in a text blob, so a match offset from a
-// regex can be turned into a line number without rescanning the whole string each time
-function computeLineOffsets(content) {
-  const offsets = [0];
-  for (let i = 0; i < content.length; i++) {
-    if (content.charCodeAt(i) === 10 /* \n */) offsets.push(i + 1);
-  }
-  return offsets;
-}
-
-// Binary-searches lineOffsets for the line containing index
-function getLineNumber(lineOffsets, index) {
-  let lo = 0, hi = lineOffsets.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (lineOffsets[mid] <= index) lo = mid; else hi = mid - 1;
-  }
-  return lo + 1;
-}
-
 const endpointRegex = new RegExp(
   `(?:"|')((?:[a-zA-Z]{1,10}:\\/\\/|\\/\\/)[^"']*?|(?:\\/|\\.\\/|\\.\\.\\/)[^"'\\s<>]+|[a-zA-Z0-9_\\-/]+\\.[a-z]{1,5}(?:\\?[^"'\\s]*)?)(?:"|')`,
   "g"
@@ -264,111 +232,6 @@ const secretPatterns = {
 // Skip the full secret-regex pass unless a likely keyword is present
 const secretTrigger = /AKIA|AIza|sk_live|ghp_|github_pat_|gh[or]_|xox[baprs]|eyJ|-----BEGIN|mongodb|postgres|postgresql|algolia|cloudflare|mysql|sgp_|segment|sgmt|facebook|fb|ya29|hooks\.slack\.com|discord\.com\/api\/webhooks|DefaultEndpointsProtocol|dop_v1_|glpat-|ghs_|sk_test_|sq0atp-|[0-9]{8,10}:|SG\.|AC[a-f0-9]{32}|heroku|redis|sbp_|npm_|firebaseio/i;
 
-// Extracts URL-like strings from JS/HTML content
-function extractEndpointsWithLines(content, lineOffsets) {
-  const matches = [...content.matchAll(endpointRegex)];
-  return matches.map(m => ({
-    value: m[1],
-    line: getLineNumber(lineOffsets, m.index)
-  })).filter(e => {
-    // webhooks are shown as secrets instead, not endpoints
-    if (e.value.includes("hooks.slack.com") || e.value.includes("discord.com/api/webhooks")) return false;
-    return filterUrl(e.value);
-  });
-}
-
-// Runs the secret-pattern regexes against page content
-function extractSecretsWithLines(content, lineOffsets) {
-  if (!secretTrigger.test(content)) return [];
-
-  const found = [];
-  for (const [name, regex] of Object.entries(secretPatterns)) {
-    const matches = [...content.matchAll(regex)];
-    matches.forEach(m => {
-      // prefer the capture group if present, else the whole match
-      let val = (m[1] || m[0]).trim();
-
-      // skip long paths that aren't actually URIs (false positives)
-      if (val.includes("/") && val.split("/").length > 3 && !val.includes("://")) return;
-      if (blockedSecretKeywords.some(bk => val.includes(bk))) return;
-      if (val.length < 8 || val.length > 500) return;
-
-      found.push({
-        value: `${name}: ${val}`,
-        line: getLineNumber(lineOffsets, m.index)
-      });
-    });
-  }
-  return found;
-}
-
-// Detects file-looking URLs (absolute or quoted relative)
-function extractFilesWithLines(content, lineOffsets) {
-  const fileRegex = /((?:https?:\/\/|(?<=["']))[^"'\s<>]*\.(?:json|xml|config|env|yaml|yml|sql|db|bak|zip|tar|gz|7z|pdf|doc|docx|js|html|php|asp|aspx|jsp|txt)(?:\?[^"'\s]*)?)(?:["'\s]|$)/gi;
-  const matches = [...content.matchAll(fileRegex)];
-
-  return matches.map(m => ({
-    value: m[1],
-    line: getLineNumber(lineOffsets, m.index)
-  })).filter(f => {
-    if (!f.value || f.value.startsWith(".")) return false;
-    // Length check to avoid massive false positives
-    if (f.value.length < 4 || f.value.length > 250) return false;
-    return true;
-  });
-}
-
-// Finds same-site <a href> links to crawl next
-function extractInternalLinks(html, baseUrl) {
-  const directoryBase = directoryfyUrl(baseUrl);
-  const currentUrlObj = new URL(directoryBase);
-  const targetHost = currentUrlObj.hostname.replace(/^www\./, "");
-
-  // raw HTML href="..." plus markdown [text](url), needed because the jina.ai fallback
-  // returns markdown instead of HTML, so links show up in that form instead
-  const patterns = [/href=["']([^"']+)["']/gi, /\]\(([^)\s]+)\)/g];
-  const links = [];
-  for (const re of patterns) {
-    let match;
-    while ((match = re.exec(html)) !== null) {
-      try {
-        const url = new URL(match[1], directoryBase);
-        const linkHost = url.hostname.replace(/^www\./, "");
-
-        // allow subdomains and www variants
-        if ((linkHost === targetHost || url.hostname.endsWith("." + targetHost)) &&
-          !url.pathname.endsWith(".js") && !url.pathname.endsWith(".css")) {
-          links.push(normalizeUrl(url.href.split("#")[0]));
-        }
-      } catch { }
-    }
-  }
-  return [...new Set(links)];
-}
-
-// Finds same-site <script src> URLs to crawl next
-function extractScriptUrls(html, baseUrl) {
-  const directoryBase = directoryfyUrl(baseUrl);
-  const currentUrlObj = new URL(directoryBase);
-  const targetHost = currentUrlObj.hostname.replace(/^www\./, "");
-
-  const re = /<script[^>]+src=["']([^"']+)["']/gi;
-  const scripts = [];
-  let match;
-  while ((match = re.exec(html)) !== null) {
-    try {
-      const url = new URL(match[1], directoryBase);
-      const scriptHost = url.hostname.replace(/^www\./, "");
-
-      // allow subdomains and www variants
-      if (scriptHost === targetHost || url.hostname.endsWith("." + targetHost) || !url.hostname) {
-        scripts.push(normalizeUrl(url.href));
-      }
-    } catch { }
-  }
-  return [...new Set(scripts)];
-}
-
 function isInterestingFile(url) {
   if (!url) return false;
   const cleaned = url.split("?")[0].toLowerCase();
@@ -406,6 +269,21 @@ function downloadFile(filename, content, type) {
     document.body.removeChild(link);
   }, 0);
 }
+
+// False-positive keywords for secret detection (loaded from data/blocked-secret-keywords.txt)
+let blockedSecretKeywords = [];
+
+// File extensions to ignore
+// File extensions to ignore (loaded from data/excluded-extensions.txt)
+let excludedExtensions = [];
+
+// Third-party/tracker domains to ignore
+// Third-party/tracker domains to ignore (loaded from data/ignored-domains.txt)
+let externalDomainsToIgnore = [];
+
+// URL prefixes to ignore
+// URL prefixes to ignore (loaded from data/disallowed-prefixes.txt)
+let disallowedPrefixes = [];
 
 const stopScanBtn = document.getElementById("crawler-stop-btn");
 
@@ -602,6 +480,130 @@ async function recursiveScan(url, maxDepth, currentDepth = 0, targetHost = null)
   } catch (e) {
     console.warn(`Failed to scan ${normUrl}:`, e);
   }
+}
+
+// Precomputes newline positions, so line lookups are a binary search instead of a full rescan
+function computeLineOffsets(content) {
+  const offsets = [0];
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) === 10 /* \n */) offsets.push(i + 1);
+  }
+  return offsets;
+}
+
+// Binary-searches lineOffsets for the line containing index
+function getLineNumber(lineOffsets, index) {
+  let lo = 0, hi = lineOffsets.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (lineOffsets[mid] <= index) lo = mid; else hi = mid - 1;
+  }
+  return lo + 1;
+}
+
+// Extracts URL-like strings from JS/HTML content
+function extractEndpointsWithLines(content, lineOffsets) {
+  const matches = [...content.matchAll(endpointRegex)];
+  return matches.map(m => ({
+    value: m[1],
+    line: getLineNumber(lineOffsets, m.index)
+  })).filter(e => {
+    // webhooks are shown as secrets instead, not endpoints
+    if (e.value.includes("hooks.slack.com") || e.value.includes("discord.com/api/webhooks")) return false;
+    return filterUrl(e.value);
+  });
+}
+
+// Runs the secret-pattern regexes against page content
+function extractSecretsWithLines(content, lineOffsets) {
+  if (!secretTrigger.test(content)) return [];
+
+  const found = [];
+  for (const [name, regex] of Object.entries(secretPatterns)) {
+    const matches = [...content.matchAll(regex)];
+    matches.forEach(m => {
+      // prefer the capture group if present, else the whole match
+      let val = (m[1] || m[0]).trim();
+
+      // skip long paths that aren't actually URIs (false positives)
+      if (val.includes("/") && val.split("/").length > 3 && !val.includes("://")) return;
+      if (blockedSecretKeywords.some(bk => val.includes(bk))) return;
+      if (val.length < 8 || val.length > 500) return;
+
+      found.push({
+        value: `${name}: ${val}`,
+        line: getLineNumber(lineOffsets, m.index)
+      });
+    });
+  }
+  return found;
+}
+
+// Detects file-looking URLs (absolute or quoted relative)
+function extractFilesWithLines(content, lineOffsets) {
+  const fileRegex = /((?:https?:\/\/|(?<=["']))[^"'\s<>]*\.(?:json|xml|config|env|yaml|yml|sql|db|bak|zip|tar|gz|7z|pdf|doc|docx|js|html|php|asp|aspx|jsp|txt)(?:\?[^"'\s]*)?)(?:["'\s]|$)/gi;
+  const matches = [...content.matchAll(fileRegex)];
+
+  return matches.map(m => ({
+    value: m[1],
+    line: getLineNumber(lineOffsets, m.index)
+  })).filter(f => {
+    if (!f.value || f.value.startsWith(".")) return false;
+    // Length check to avoid massive false positives
+    if (f.value.length < 4 || f.value.length > 250) return false;
+    return true;
+  });
+}
+
+// Finds same-site <a href> links to crawl next
+function extractInternalLinks(html, baseUrl) {
+  const directoryBase = directoryfyUrl(baseUrl);
+  const currentUrlObj = new URL(directoryBase);
+  const targetHost = currentUrlObj.hostname.replace(/^www\./, "");
+
+  // raw HTML href="..." plus markdown [text](url) — the jina.ai fallback returns markdown,
+  // not HTML, so links show up in that form instead
+  const patterns = [/href=["']([^"']+)["']/gi, /\]\(([^)\s]+)\)/g];
+  const links = [];
+  for (const re of patterns) {
+    let match;
+    while ((match = re.exec(html)) !== null) {
+      try {
+        const url = new URL(match[1], directoryBase);
+        const linkHost = url.hostname.replace(/^www\./, "");
+
+        // allow subdomains and www variants
+        if ((linkHost === targetHost || url.hostname.endsWith("." + targetHost)) &&
+          !url.pathname.endsWith(".js") && !url.pathname.endsWith(".css")) {
+          links.push(normalizeUrl(url.href.split("#")[0]));
+        }
+      } catch { }
+    }
+  }
+  return [...new Set(links)];
+}
+
+// Finds same-site <script src> URLs to crawl next
+function extractScriptUrls(html, baseUrl) {
+  const directoryBase = directoryfyUrl(baseUrl);
+  const currentUrlObj = new URL(directoryBase);
+  const targetHost = currentUrlObj.hostname.replace(/^www\./, "");
+
+  const re = /<script[^>]+src=["']([^"']+)["']/gi;
+  const scripts = [];
+  let match;
+  while ((match = re.exec(html)) !== null) {
+    try {
+      const url = new URL(match[1], directoryBase);
+      const scriptHost = url.hostname.replace(/^www\./, "");
+
+      // allow subdomains and www variants
+      if (scriptHost === targetHost || url.hostname.endsWith("." + targetHost) || !url.hostname) {
+        scripts.push(normalizeUrl(url.href));
+      }
+    } catch { }
+  }
+  return [...new Set(scripts)];
 }
 
 // Crawler/Prober tab switching
