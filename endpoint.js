@@ -232,44 +232,6 @@ const secretPatterns = {
 // Skip the full secret-regex pass unless a likely keyword is present
 const secretTrigger = /AKIA|AIza|sk_live|ghp_|github_pat_|gh[or]_|xox[baprs]|eyJ|-----BEGIN|mongodb|postgres|postgresql|algolia|cloudflare|mysql|sgp_|segment|sgmt|facebook|fb|ya29|hooks\.slack\.com|discord\.com\/api\/webhooks|DefaultEndpointsProtocol|dop_v1_|glpat-|ghs_|sk_test_|sq0atp-|[0-9]{8,10}:|SG\.|AC[a-f0-9]{32}|heroku|redis|sbp_|npm_|firebaseio/i;
 
-function isInterestingFile(url) {
-  if (!url) return false;
-  const cleaned = url.split("?")[0].toLowerCase();
-  const interestingExtensions = [
-    ".json", ".xml", ".config", ".env", ".yaml", ".yml", ".sql", ".db", ".bak",
-    ".zip", ".tar", ".gz", ".7z", ".pdf", ".doc", ".docx", ".js", ".html",
-    ".php", ".asp", ".aspx", ".jsp", ".txt", ".xls", ".xlsx", ".csv", ".log"
-  ];
-  return interestingExtensions.some(ext => cleaned.endsWith(ext));
-}
-
-// Decides whether an extracted URL is worth keeping: not an ignored extension/domain/prefix,
-// not a base64 blob, and not absurdly long (a common false-positive shape)
-function filterUrl(url) {
-  const lowered = (url || "").toLowerCase();
-  return (
-    lowered &&
-    !excludedExtensions.some(ext => lowered.endsWith(ext)) &&
-    !externalDomainsToIgnore.some(domain => lowered.includes(domain)) &&
-    !disallowedPrefixes.some(prefix => lowered.startsWith(prefix)) &&
-    !lowered.includes("base64") &&
-    lowered.length < 300
-  );
-}
-
-function downloadFile(filename, content, type) {
-  const blob = new Blob([content], { type });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  setTimeout(() => {
-    URL.revokeObjectURL(link.href);
-    document.body.removeChild(link);
-  }, 0);
-}
-
 // False-positive keywords for secret detection (loaded from data/blocked-secret-keywords.txt)
 let blockedSecretKeywords = [];
 
@@ -847,6 +809,30 @@ function renderProberLine(path, status, fullUrl, length) {
   proberResults.appendChild(line);
 }
 
+// Checks if a URL looks like a file worth listing separately
+function isInterestingFile(url) {
+  if (!url) return false;
+  const cleaned = url.split("?")[0].toLowerCase();
+  const interestingExtensions = [
+    ".json", ".xml", ".config", ".env", ".yaml", ".yml", ".sql", ".db", ".bak",
+    ".zip", ".tar", ".gz", ".7z", ".pdf", ".doc", ".docx", ".js", ".html",
+    ".php", ".asp", ".aspx", ".jsp", ".txt", ".xls", ".xlsx", ".csv", ".log"
+  ];
+  return interestingExtensions.some(ext => cleaned.endsWith(ext));
+}
+
+function filterUrl(url) {
+  const lowered = (url || "").toLowerCase();
+  return (
+    lowered &&
+    !excludedExtensions.some(ext => lowered.endsWith(ext)) &&
+    !externalDomainsToIgnore.some(domain => lowered.includes(domain)) &&
+    !disallowedPrefixes.some(prefix => lowered.startsWith(prefix)) &&
+    !lowered.includes("base64") &&
+    lowered.length < 300
+  );
+}
+
 function renderResults(filter = "", category = "all") {
   results.innerHTML = "";
   const grouped = {};
@@ -927,4 +913,69 @@ document.getElementById("crawler-filter-input").oninput = (e) => {
   const activeTab = document.querySelector(".tab-btn.active").dataset.tab;
   renderResults(e.target.value, activeTab);
 };
+
+// CSV/Markdown export buttons
+const exportCsv = document.getElementById("crawler-export-csv");
+const exportMd = document.getElementById("crawler-export-md");
+
+exportCsv.onclick = () => {
+  const csv = "Source,Line,Type,Value\n" + state.allData.map(d => `"${d.source}",${d.line},"${d.type}","${d.value.replace(/"/g, '""')}"`).join("\n");
+  downloadFile("jjs-results.csv", csv, "text/csv");
+};
+
+exportMd.onclick = () => {
+  let md = "# JSpider Scan Results\n\n";
+  md += `**Total Endpoints:** ${state.endpoints.size}\n`;
+  md += `**Total Secrets:** ${state.secrets.size}\n\n`;
+
+  const grouped = {};
+  state.allData.forEach(d => {
+    if (!grouped[d.source]) grouped[d.source] = [];
+    grouped[d.source].push(d);
+  });
+
+  for (const [src, items] of Object.entries(grouped)) {
+    md += `### ${src}\n`;
+    items.forEach(it => md += `- [L${it.line}] [${it.type}] ${it.value}\n`);
+    md += "\n";
+  }
+  downloadFile("jjs-report.md", md, "text/markdown");
+};
+
+exportTxt.onclick = () => {
+  const content = state.allData.map(d => `[L${d.line}] [${d.type}] ${d.value} (Source: ${d.source})`).join("\n");
+  downloadFile("jjs-endpoints.txt", content, "text/plain");
+};
+
+exportJson.onclick = () => {
+  const json = JSON.stringify(state.allData, null, 2);
+  downloadFile("jjs-results.json", json, "application/json");
+};
+
+function downloadFile(filename, content, type) {
+  const blob = new Blob([content], { type });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(link.href);
+    document.body.removeChild(link);
+  }, 0);
+}
+
+// Show/hide advanced crawler options
+const toggleAdvancedCrawler = document.getElementById("crawler-advanced-toggle");
+const advancedCrawlerContainer = document.getElementById("crawler-advanced-panel");
+const crawlerArrow = document.getElementById("crawler-advanced-arrow");
+
+toggleAdvancedCrawler?.addEventListener("click", (e) => {
+  e.preventDefault();
+  const isHidden = advancedCrawlerContainer.style.display === "none";
+  advancedCrawlerContainer.style.display = isHidden ? "flex" : "none";
+  if (crawlerArrow) {
+    crawlerArrow.style.transform = isHidden ? "rotate(180deg)" : "rotate(0deg)";
+  }
+});
 
